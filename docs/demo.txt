@@ -1,0 +1,38 @@
+SLACK ARCHIVER — OFFLINE DEMO
+Recorded September 8, 2026, with Python 3.10.0 on Windows.
+All identities and messages below are synthetic. No Slack request was made.
+Run from a fresh project checkout (or choose fresh --db / --output paths).
+
+> python archiver.py demo
+Synthetic demo: 3 new messages. No Slack connection was made.
+
+> python archiver.py demo
+Synthetic demo: 0 new messages. No Slack connection was made.
+
+> python archiver.py export --db data/demo.db --channel CDEMO --output exports/demo.json
+Export created. Treat it as private workspace data.
+
+> python -m json.tool exports/demo.json
+{
+    "format_version": 1,
+    "team_id": "TDEMO",
+    "channel_id": "CDEMO",
+    "synthetic": true,
+    "messages": [
+        {
+            "ts": "1700000000.000001",
+            "user": "USAMPLE1",
+            "text": "Synthetic demo: preserve decisions, not credentials."
+        },
+        {
+            "ts": "1700000001.000001",
+            "user": "USAMPLE2",
+            "text": "A completed sync advances the checkpoint."
+        },
+        {
+            "ts": "1700000002.000001",
+            "user": "USAMPLE1",
+            "text": "Rerunning this demo adds zero duplicate messages."
+        }
+    ]
+}
