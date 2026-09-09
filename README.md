@@ -68,6 +68,7 @@ SLACK_TOKEN -> verify owner -> selected channel history -> SQLite transaction
 | Bounded API use | Fixed Slack origin, three read-only methods, no redirects, 30-second request timeout, 4 MiB response cap, repeated-cursor detection. |
 | Explicit rate handling | 15 messages/page, 60 seconds between history calls by default. HTTP 429 stops with sanitized `Retry-After` guidance; no retry loop. |
 | Portable output | Streamed, oldest-first JSON with a versioned envelope and original message objects. |
+| Complete export publication | Write and close a temporary file in the output directory, then hard-link it to the final name without replacing an existing file. |
 
 At the default budget of 100 pages, one channel can take roughly 100 minutes plus
 network time. A budget exhaustion rolls back that channel: increase `--max-pages`
@@ -89,7 +90,8 @@ python -m unittest -v
 Tests use temporary databases and mocked transport only: pagination, deduplication,
 incremental resume, failed-page rollback, malformed pages, cursor limits, owner
 rejection, workspace separation, API failures, rate limits, credential transport,
-and the complete offline CLI demo/export. CI runs the same tests and a smoke check
+export write/publication failures, competing output creation, and the complete
+offline CLI demo/export. CI runs the same tests and a smoke check
 on Windows/Linux with Python 3.10/3.14. Dependabot updates pinned Actions; there are
 no third-party Python dependencies to install or lock.
 
@@ -104,8 +106,13 @@ no third-party Python dependencies to install or lock.
 - Live integration has **not** been exercised with a real workspace. The adapter
   is tested offline; validate permissions and current Slack behavior in a workspace
   you control before relying on it. Enterprise-wide/org tokens are out of scope.
-- Interrupted syncs roll back their channel; an interrupted/disk-full export may
-  leave an incomplete new file. Validate JSON and use a new filename to retry.
+- Interrupted syncs roll back their channel. Export write failures do not publish
+  a partial destination; existing files are never replaced, even if created during
+  export. The output filesystem must support hard links or export fails safely.
+  A process crash or failed cleanup may leave a private-data `.slack-export-*.tmp`
+  staging file in the output directory; remove it only when no export is running.
+  This protects publication, not durability against power loss. Keep the output
+  directory access-restricted; Windows staging files inherit its access controls.
 - Scheduled execution, persistent channel management, and a browser UI are deferred.
   The runnable CLI is the demo; there is no public deployment or background service.
 

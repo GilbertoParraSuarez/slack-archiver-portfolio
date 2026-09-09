@@ -76,8 +76,61 @@ class ArchiveTests(unittest.TestCase):
         doc = json.loads(target.read_text(encoding="utf-8"))
         self.assertEqual(doc["team_id"], "TDEMO")
         self.assertEqual([m["ts"] for m in doc["messages"]], ["9.999999", "10.000001"])
+        original = target.read_bytes()
         with self.assertRaises(FileExistsError):
             a.export_channel(self.db, "CDEMO", target)
+        self.assertEqual(target.read_bytes(), original)
+        self.assertEqual(list(target.parent.glob(".slack-export-*.tmp")), [])
+
+    def test_failed_export_write_leaves_no_output_or_staging_file(self):
+        a.sync_channel(self.db, Mock(return_value=page("1.000000")), "CDEMO", interval=0)
+        target = Path(self.tmp.name) / "exports" / "export.json"
+        real_open = io.open
+
+        def fail_write(*args, **kwargs):
+            file = real_open(*args, **kwargs)
+            broken = MagicMock(wraps=file)
+            broken.__enter__.return_value = broken
+            broken.__exit__.side_effect = file.__exit__
+
+            def disk_full(text):
+                file.write(text[:10])
+                raise OSError("Simulated disk full")
+
+            broken.write.side_effect = disk_full
+            return broken
+
+        with patch("pathlib.Path.open", autospec=True, side_effect=fail_write), \
+                patch("io.open", side_effect=fail_write), self.assertRaisesRegex(OSError, "disk full"):
+            a.export_channel(self.db, "CDEMO", target)
+        self.assertFalse(target.exists())
+        self.assertEqual(list(target.parent.iterdir()), [])
+
+    def test_export_publication_failures_preserve_competing_output(self):
+        a.sync_channel(self.db, Mock(return_value=page("1.000000")), "CDEMO", interval=0)
+        real_link = os.link
+        for failure in ["competing", "unsupported"]:
+            with self.subTest(failure=failure):
+                target = Path(self.tmp.name) / failure / "export.json"
+
+                def publish(source, destination):
+                    staged = Path(source)
+                    self.assertFalse(target.exists())
+                    self.assertEqual(staged.parent, target.parent)
+                    self.assertEqual(len(json.loads(staged.read_text(encoding="utf-8"))["messages"]), 1)
+                    if os.name == "posix":
+                        self.assertEqual(staged.stat().st_mode & 0o777, 0o600)
+                    if failure == "unsupported":
+                        raise OSError("Hard links unavailable")
+                    target.write_text("Competing export", encoding="utf-8")
+                    real_link(source, destination)
+
+                with patch("archiver.os.link", side_effect=publish) as link, self.assertRaises(OSError):
+                    a.export_channel(self.db, "CDEMO", target)
+                link.assert_called_once()
+                if failure == "competing":
+                    self.assertEqual(target.read_text(encoding="utf-8"), "Competing export")
+                self.assertEqual(list(target.parent.iterdir()), [target] if failure == "competing" else [])
 
 
 class AuthAndTransportTests(unittest.TestCase):
