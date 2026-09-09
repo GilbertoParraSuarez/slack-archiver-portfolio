@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import sqlite3
 import sys
+import tempfile
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -149,15 +150,21 @@ def export_channel(db, channel, output):
     team = db.execute("SELECT team FROM workspace WHERE id=1").fetchone()[0]
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    # Exclusive create protects existing exports; stream rows instead of loading the archive into memory.
-    with output.open("x", encoding="utf-8") as file:
-        header = {"format_version": 1, "team_id": team, "channel_id": channel, "synthetic": team == "TDEMO"}
-        file.write(json.dumps(header)[:-1] + ', "messages": [\n')
-        separator = ""
-        for (payload,) in db.execute("SELECT payload FROM messages WHERE channel=? ORDER BY length(ts), ts", (channel,)):
-            file.write(separator + payload)
-            separator = ",\n"
-        file.write("\n]}\n")
+    file = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=output.parent,
+                                       prefix=".slack-export-", suffix=".tmp", delete=False)
+    try:
+        with file:
+            header = {"format_version": 1, "team_id": team, "channel_id": channel, "synthetic": team == "TDEMO"}
+            file.write(json.dumps(header)[:-1] + ', "messages": [\n')
+            separator = ""
+            for (payload,) in db.execute("SELECT payload FROM messages WHERE channel=? ORDER BY length(ts), ts", (channel,)):
+                file.write(separator + payload)
+                separator = ",\n"
+            file.write("\n]}\n")
+        # Publish only after close succeeds; a hard link never replaces an existing destination.
+        os.link(file.name, output)
+    finally:
+        os.unlink(file.name)
 
 
 DEMO_MESSAGES = [
