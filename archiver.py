@@ -188,12 +188,24 @@ def main(argv=None):
     export.add_argument("--db", default="data/archive.db")
     export.add_argument("--channel", required=True)
     export.add_argument("--output", required=True)
+    inventory = commands.add_parser("list", help="List synced channels, message counts and checkpoints offline.")
+    inventory.add_argument("--db", default="data/archive.db")
     args = parser.parse_args(argv)
     try:
-        if args.command == "export":
+        if args.command in {"export", "list"}:
             with closing(sqlite3.connect(Path(args.db).resolve().as_uri() + "?mode=ro", uri=True)) as db:
-                export_channel(db, args.channel, args.output)
-            print("Export created. Treat it as private workspace data.")
+                if args.command == "export":
+                    export_channel(db, args.channel, args.output)
+                    print("Export created. Treat it as private workspace data.")
+                else:
+                    rows = db.execute("""
+                        SELECT c.channel, count(m.ts), c.ts FROM checkpoints AS c
+                        LEFT JOIN messages AS m ON m.channel = c.channel
+                        GROUP BY c.channel, c.ts ORDER BY c.channel
+                    """).fetchall()
+                    print("Channel\tMessages\tCheckpoint" if rows else "No synced channels in this archive.")
+                    for channel, count, checkpoint in rows:
+                        print(f"{channel}\t{count}\t{checkpoint}")
         elif args.command == "demo":
             with closing(open_archive(args.db, "TDEMO")) as db:
                 def synthetic_page(method, **params):

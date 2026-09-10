@@ -16,6 +16,7 @@ Slack account, or credentials are needed for the demo. Run from this directory:
 ```console
 python archiver.py demo
 python archiver.py demo
+python archiver.py list --db data/demo.db
 python archiver.py export --db data/demo.db --channel CDEMO --output exports/demo.json
 python -m json.tool exports/demo.json
 ```
@@ -24,6 +25,15 @@ The first run inserts **3 synthetic messages**. The second inserts **0**.
 The export preserves message timestamps as strings and labels the data synthetic.
 Choose a new filename when exporting again: existing files are never overwritten.
 See the [recorded offline demo](docs/demo.txt).
+
+## Inspect a local archive
+
+Run `python archiver.py list --db data/demo.db` to see synced channel IDs, message
+counts, and exact stored checkpoints, sorted by channel ID. Successfully synced
+empty channels appear with a count of zero; an archive without completed syncs
+prints `No synced channels in this archive.` The command opens SQLite read-only,
+never shows message contents, and needs no token or network. Missing or invalid
+databases fail without creating an archive. Omit `--db` to use `data/archive.db`.
 
 ## Snapshot your workspace
 
@@ -91,7 +101,8 @@ Tests use temporary databases and mocked transport only: pagination, deduplicati
 incremental resume, failed-page rollback, malformed pages, cursor limits, owner
 rejection, workspace separation, API failures, rate limits, credential transport,
 export write/publication failures, competing output creation, and the complete
-offline CLI demo/export. CI runs the same tests and a smoke check
+offline CLI demo/list/export, read-only inventory, and invalid database handling.
+CI runs the same tests and a smoke check
 on Windows/Linux with Python 3.10/3.14. Dependabot updates pinned Actions; there are
 no third-party Python dependencies to install or lock.
 

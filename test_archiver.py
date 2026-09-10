@@ -69,6 +69,41 @@ class ArchiveTests(unittest.TestCase):
             a.open_archive(self.path, "TOTHER")
         self.assertEqual(self.db.execute("SELECT team FROM workspace").fetchone()[0], "TDEMO")
 
+    def test_list_inventory_is_sorted_exact_offline_and_read_only(self):
+        a.sync_channel(self.db, Mock(return_value=page("10.000002", "9.999999")), "GDEMO", interval=0)
+        a.sync_channel(self.db, Mock(return_value=page()), "CEMPTY", interval=0)
+        before = self.path.read_bytes()
+        with patch.dict(os.environ, {}, clear=True), \
+                patch("archiver.slack_call", side_effect=AssertionError("No Slack access")) as call, \
+                patch("archiver.build_opener", side_effect=AssertionError("No network")) as opener, \
+                patch("archiver.sqlite3.connect", wraps=a.sqlite3.connect) as connect, \
+                patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(a.main(["list", "--db", str(self.path)]), 0)
+        self.assertEqual(output.getvalue(), "Channel\tMessages\tCheckpoint\nCEMPTY\t0\t0.000000\nGDEMO\t2\t10.000002\n")
+        connect.assert_called_once_with(self.path.resolve().as_uri() + "?mode=ro", uri=True)
+        call.assert_not_called()
+        opener.assert_not_called()
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_list_empty_archive(self):
+        with patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(a.main(["list", "--db", str(self.path)]), 0)
+        self.assertEqual(output.getvalue(), "No synced channels in this archive.\n")
+
+    def test_list_missing_or_invalid_database_fails_safely(self):
+        missing = Path(self.tmp.name) / "missing.db"
+        invalid = Path(self.tmp.name) / "invalid.db"
+        invalid.write_text("Not a database: PRIVATE", encoding="utf-8")
+        unrelated = Path(self.tmp.name) / "unrelated.db"
+        a.sqlite3.connect(unrelated).close()
+        for path in [missing, invalid, unrelated]:
+            with self.subTest(path=path.name), patch("sys.stderr", new_callable=io.StringIO) as error, \
+                    patch("sys.stdout", new_callable=io.StringIO) as output:
+                self.assertEqual(a.main(["list", "--db", str(path)]), 1)
+                self.assertEqual(error.getvalue(), "Error: local operation failed; check paths, permissions and database availability.\n")
+                self.assertEqual(output.getvalue(), "")
+        self.assertFalse(missing.exists())
+
     def test_export_exact_order_and_no_overwrite(self):
         a.sync_channel(self.db, Mock(return_value=page("10.000001", "9.999999")), "CDEMO", interval=0)
         target = Path(self.tmp.name) / "export.json"
@@ -212,6 +247,9 @@ class CLITests(unittest.TestCase):
             self.assertEqual(first.returncode, 0, first.stderr)
             self.assertIn("3 new", first.stdout)
             self.assertIn("0 new", run("demo").stdout)
+            inventory = run("list", "--db", "data/demo.db")
+            self.assertEqual(inventory.returncode, 0, inventory.stderr)
+            self.assertEqual(inventory.stdout, "Channel\tMessages\tCheckpoint\nCDEMO\t3\t1700000002.000001\n")
             exported = run("export", "--db", "data/demo.db", "--channel", "CDEMO", "--output", "exports/demo.json")
             self.assertEqual(exported.returncode, 0, exported.stderr)
             doc = json.loads((Path(directory) / "exports/demo.json").read_text(encoding="utf-8"))
